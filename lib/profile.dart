@@ -1,0 +1,1642 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:image_picker/image_picker.dart';
+import 'supabase_service.dart';
+import 'models.dart';
+import 'my_list.dart';
+import 'my_collection.dart';
+import 'homepage.dart';
+import 'merit_system.dart';
+import 'merit_history.dart';
+import 'nid_verification.dart';
+import 'admin_panel.dart';
+
+// ─────────────────────────────────────────────────────────────
+// LoginScreen
+// ─────────────────────────────────────────────────────────────
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  static const Color primaryColor = Color(0xFF381932);
+  static const Color backgroundColor = Color(0xFFF0EDE9);
+
+  bool _isLogin = true;
+  bool _loading = false;
+  final _emailCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  bool _obscurePass = true;
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _passCtrl.dispose();
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  /// Validates password strength:
+  /// min 8 chars, ≥1 uppercase, ≥1 lowercase, ≥1 digit, ≥1 special char
+  String? _validatePassword(String? v) {
+    if (v == null || v.isEmpty) return 'Password required';
+    if (v.length < 8) return 'Minimum 8 characters';
+    if (!v.contains(RegExp(r'[A-Z]'))) return 'At least one uppercase letter (A-Z)';
+    if (!v.contains(RegExp(r'[a-z]'))) return 'At least one lowercase letter (a-z)';
+    if (!v.contains(RegExp(r'[0-9]'))) return 'At least one digit (0-9)';
+    if (!v.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>_\-=+[\]\\;`~\/]'))) {
+      return 'At least one special character (!@#\$%…)';
+    }
+    return null;
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _loading = true);
+    try {
+      if (_isLogin) {
+        final res = await SupabaseService.signIn(
+            _emailCtrl.text.trim(), _passCtrl.text);
+        if (res.user != null && mounted) {
+          Navigator.pushReplacement(
+              context, MaterialPageRoute(builder: (_) => const HomePage()));
+        }
+      } else {
+        final res = await SupabaseService.signUp(
+          _emailCtrl.text.trim(),
+          _passCtrl.text,
+          fullName: _nameCtrl.text.trim(),
+        );
+        if (res.user != null && mounted) {
+          // Create profile immediately after sign up
+          // The trigger handles it but we upsert to be safe
+          try {
+            await SupabaseService.upsertProfile({
+              'id': res.user!.id,
+              'full_name': _nameCtrl.text.trim(),
+              'email': _emailCtrl.text.trim(),
+              'merit_points': 70,
+              'total_merit_earned': 0,
+              'total_merit_lost': 0,
+              'daily_merit_gain': 0,
+              'wallet_balance': 0.0,
+              'reward_points': 0,
+              'nid_verified': false,
+              'is_admin': false,
+              'is_banned': false,
+            });
+          } catch (_) {
+            // Profile may already exist via trigger — that's fine
+          }
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text(
+                  'Account created! Check your email to confirm, then log in.'),
+              backgroundColor: Colors.green,
+            ));
+            setState(() => _isLogin = true);
+          }
+        }
+      }
+    } on AuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(e.message), backgroundColor: Colors.red));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: backgroundColor,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 40),
+                Center(
+                  child: Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                        color: primaryColor.withOpacity(0.1),
+                        shape: BoxShape.circle),
+                    child: Icon(Icons.home_work, size: 44, color: primaryColor),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Center(
+                    child: Text(
+                        _isLogin ? 'Welcome Back' : 'Create Account',
+                        style: const TextStyle(
+                            fontSize: 28, fontWeight: FontWeight.bold))),
+                Center(
+                    child: Text(
+                        _isLogin
+                            ? 'Sign in to your account'
+                            : 'Join RentalApp today',
+                        style: TextStyle(
+                            color: Colors.grey.shade600, fontSize: 15))),
+                const SizedBox(height: 40),
+                if (!_isLogin) ...[
+                  _label('Full Name'),
+                  TextFormField(
+                    controller: _nameCtrl,
+                    decoration: _inputDec(
+                        'Enter your full name', Icons.person_outline),
+                    validator: (v) =>
+                    (v == null || v.trim().isEmpty)
+                        ? 'Name is required'
+                        : null,
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                _label('Email Address'),
+                TextFormField(
+                  controller: _emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration:
+                  _inputDec('Enter your email', Icons.email_outlined),
+                  validator: (v) =>
+                  (v == null || !v.contains('@'))
+                      ? 'Valid email required'
+                      : null,
+                ),
+                const SizedBox(height: 16),
+                _label('Password'),
+                TextFormField(
+                  controller: _passCtrl,
+                  obscureText: _obscurePass,
+                  decoration: _inputDec('Enter password', Icons.lock_outline)
+                      .copyWith(
+                    suffixIcon: IconButton(
+                      icon: Icon(_obscurePass
+                          ? Icons.visibility_off
+                          : Icons.visibility),
+                      onPressed: () =>
+                          setState(() => _obscurePass = !_obscurePass),
+                    ),
+                  ),
+                  // Only validate strength on Register; login just needs non-empty
+                  validator: _isLogin
+                      ? (v) => (v == null || v.isEmpty)
+                      ? 'Password required'
+                      : null
+                      : _validatePassword,
+                ),
+                if (!_isLogin) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'Password must be at least 8 characters and include uppercase, lowercase, a number, and a special character.',
+                      style: TextStyle(fontSize: 11, color: Colors.blueGrey),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  height: 54,
+                  child: ElevatedButton(
+                    onPressed: _loading ? null : _submit,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                    child: _loading
+                        ? const SizedBox(
+                      height: 22,
+                      width: 22,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor:
+                          AlwaysStoppedAnimation(Colors.white)),
+                    )
+                        : Text(_isLogin ? 'Log In' : 'Create Account',
+                        style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Center(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _isLogin = !_isLogin),
+                    child: RichText(
+                      text: TextSpan(
+                        style: const TextStyle(
+                            fontSize: 15, color: Colors.black87),
+                        children: [
+                          TextSpan(
+                              text: _isLogin
+                                  ? "Don't have an account? "
+                                  : 'Already have an account? '),
+                          TextSpan(
+                              text: _isLogin ? 'Register' : 'Log In',
+                              style: TextStyle(
+                                  color: primaryColor,
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _label(String text) => Padding(
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(text,
+        style:
+        const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+  );
+
+  InputDecoration _inputDec(String hint, IconData icon) => InputDecoration(
+    hintText: hint,
+    prefixIcon: Icon(icon, color: Colors.grey),
+    filled: true,
+    fillColor: Colors.white,
+    contentPadding:
+    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none),
+    enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey.shade200)),
+    focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide:
+        const BorderSide(color: Color(0xFF381932), width: 1.5)),
+    errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.red)),
+    focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.red)),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// ProfileScreen
+// ─────────────────────────────────────────────────────────────
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  static const Color primaryColor = Color(0xFF381932);
+  static const Color backgroundColor = Color(0xFFF0EDE9);
+
+  AppUser? _user;
+  UserMerit? _merit;
+  bool _loading = true;
+  bool _uploadingAvatar = false;
+  bool _isVerified = false;
+  bool _isAdmin = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    final uid = SupabaseService.currentUserId;
+    final email = SupabaseService.currentUser?.email ?? '';
+    if (uid == null) return;
+    try {
+      final profile = await SupabaseService.fetchProfile(uid);
+      final merit = await MeritService.getUserMerit(uid);
+      final isAdmin = await SupabaseService.isAdmin();
+      if (mounted) {
+        setState(() {
+          if (profile != null) {
+            _user = AppUser.fromMap(uid, email, profile);
+          } else {
+            // Fallback: use auth metadata for the name
+            final authMeta =
+                SupabaseService.currentUser?.userMetadata;
+            final nameFromMeta =
+                authMeta?['full_name'] as String? ?? email.split('@')[0];
+            _user = AppUser(id: uid, email: email, fullName: nameFromMeta);
+          }
+          _merit = merit;
+          _isVerified = profile?['nid_verified'] == true;
+          _isAdmin = isAdmin;
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Upload avatar to Supabase Storage bucket 'avatars' and update profile
+  Future<void> _pickAndUploadAvatar() async {
+    final picker = ImagePicker();
+    final uid = SupabaseService.currentUserId;
+    if (uid == null) return;
+
+    final XFile? picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 512,
+      maxHeight: 512,
+      imageQuality: 80,
+    );
+    if (picked == null) return;
+
+    setState(() => _uploadingAvatar = true);
+    try {
+      // Use uid-stamped filename to avoid RLS path conflicts
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final fileName = 'avatars/$uid/$timestamp.jpg';
+      String publicUrl;
+
+      if (kIsWeb) {
+        final Uint8List bytes = await picked.readAsBytes();
+        await SupabaseService.client.storage.from('avatars').uploadBinary(
+          fileName,
+          bytes,
+          fileOptions: const FileOptions(
+              contentType: 'image/jpeg', upsert: true),
+        );
+      } else {
+        final file = File(picked.path);
+        await SupabaseService.client.storage.from('avatars').upload(
+          fileName,
+          file,
+          fileOptions: const FileOptions(
+              contentType: 'image/jpeg', upsert: true),
+        );
+      }
+
+      publicUrl = SupabaseService.client.storage
+          .from('avatars')
+          .getPublicUrl(fileName);
+
+      // Update profile with new avatar URL
+      await SupabaseService.upsertProfile(
+          {'id': uid, 'avatar_url': publicUrl});
+
+      // Reload profile to reflect change
+      await _loadProfile();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Profile picture updated!'),
+          backgroundColor: Color(0xFF381932),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Upload failed: $e'),
+            backgroundColor: Colors.red));
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingAvatar = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    await SupabaseService.signOut();
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+            (_) => false,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final merit = _merit ?? UserMerit.defaultMerit();
+    final tier = merit.tier;
+    final tierColor = Color(tier.color as int);
+
+    return Scaffold(
+      backgroundColor: backgroundColor,
+      appBar: AppBar(
+        backgroundColor: primaryColor,
+        foregroundColor: Colors.white,
+        title: const Text('Profile'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const SettingsPage())),
+          ),
+          IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: _logout,
+              tooltip: 'Logout'),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+        onRefresh: _loadProfile,
+        color: primaryColor,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+
+              // ── Avatar ──
+              Stack(
+                alignment: Alignment.bottomRight,
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: _isAdmin ? Colors.amber : tierColor,
+                          width: 3),
+                      boxShadow: [
+                        BoxShadow(
+                            color: (_isAdmin ? Colors.amber : tierColor)
+                                .withOpacity(0.3),
+                            blurRadius: 16,
+                            spreadRadius: 2)
+                      ],
+                    ),
+                    child: CircleAvatar(
+                      radius: 56,
+                      backgroundImage: (_user?.avatarUrl != null &&
+                          _user!.avatarUrl!.isNotEmpty)
+                          ? NetworkImage(_user!.avatarUrl!)
+                          : null,
+                      backgroundColor:
+                      primaryColor.withOpacity(0.2),
+                      child: (_user?.avatarUrl == null ||
+                          _user!.avatarUrl!.isEmpty)
+                          ? const Icon(Icons.person,
+                          size: 56, color: Colors.white)
+                          : null,
+                    ),
+                  ),
+                  GestureDetector(
+                    onTap:
+                    _uploadingAvatar ? null : _pickAndUploadAvatar,
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: primaryColor,
+                        shape: BoxShape.circle,
+                        border:
+                        Border.all(color: Colors.white, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                              color: Colors.black.withOpacity(0.2),
+                              blurRadius: 4)
+                        ],
+                      ),
+                      child: _uploadingAvatar
+                          ? const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation(
+                                Colors.white)),
+                      )
+                          : const Icon(Icons.camera_alt,
+                          color: Colors.white, size: 18),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              // ── User Name (from profile / auth metadata) ──
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    // Show full_name from profile; fallback to auth metadata name
+                    _user?.fullName.isNotEmpty == true
+                        ? _user!.fullName
+                        : (SupabaseService.currentUser
+                        ?.userMetadata?['full_name'] as String? ??
+                        'User'),
+                    style: const TextStyle(
+                        fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                  if (_isAdmin) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade100,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.admin_panel_settings,
+                              size: 14, color: Colors.amber),
+                          SizedBox(width: 4),
+                          Text('Admin',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.amber)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(_user?.email ?? '',
+                  style: TextStyle(
+                      color: Colors.grey.shade600, fontSize: 13)),
+              const SizedBox(height: 6),
+
+              // Verification badge
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _isVerified
+                      ? Colors.green.shade50
+                      : Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: _isVerified
+                          ? Colors.green.shade200
+                          : Colors.orange.shade200),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _isVerified
+                          ? Icons.verified
+                          : Icons.warning_amber,
+                      color: _isVerified
+                          ? Colors.green
+                          : Colors.orange,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _isVerified
+                          ? 'NID Verified'
+                          : 'NID Not Verified',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: _isVerified
+                            ? Colors.green
+                            : Colors.orange,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // ── Merit Card (only for non-admins) ──
+              if (!_isAdmin)
+                GestureDetector(
+                  onTap: () => Navigator.push(context,
+                      MaterialPageRoute(
+                          builder: (_) => const MeritHistoryPage())),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                          color: tierColor.withOpacity(0.25)),
+                      boxShadow: [
+                        BoxShadow(
+                            color: Colors.black.withOpacity(0.06),
+                            blurRadius: 14,
+                            offset: const Offset(0, 4))
+                      ],
+                    ),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                              mainAxisAlignment:
+                              MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(children: [
+                                  Icon(Icons.military_tech,
+                                      color: tierColor, size: 22),
+                                  const SizedBox(width: 8),
+                                  const Text('Merit Score',
+                                      style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight:
+                                          FontWeight.bold)),
+                                ]),
+                                Row(children: [
+                                  Text('${merit.points}/100',
+                                      style: TextStyle(
+                                          fontSize: 22,
+                                          fontWeight: FontWeight.bold,
+                                          color: tierColor)),
+                                  const SizedBox(width: 6),
+                                  const Icon(Icons.chevron_right,
+                                      color: Colors.grey, size: 20),
+                                ]),
+                              ]),
+                          const SizedBox(height: 12),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: LinearProgressIndicator(
+                              value: merit.points / 100,
+                              minHeight: 12,
+                              backgroundColor: Colors.grey.shade200,
+                              valueColor:
+                              AlwaysStoppedAnimation<Color>(tierColor),
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                              mainAxisAlignment:
+                              MainAxisAlignment.spaceBetween,
+                              children: [
+                                _scaleTick('0', const Color(0xFF424242)),
+                                _scaleTick('20', const Color(0xFFB71C1C)),
+                                _scaleTick('40', const Color(0xFFFF6F00)),
+                                _scaleTick('70', const Color(0xFF2E7D32)),
+                                _scaleTick('90', const Color(0xFFFFD700)),
+                              ]),
+                          const SizedBox(height: 10),
+                          Text(tier.description,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey.shade600)),
+                          if (!merit.canRent) ...[
+                            const SizedBox(height: 10),
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.red.shade50,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                    color: Colors.red.shade200),
+                              ),
+                              child: Row(children: [
+                                Icon(Icons.warning_amber,
+                                    color: Colors.red.shade700,
+                                    size: 18),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                    child: Text(
+                                      'Your merit is below 40. You cannot rent items until you reach 40+ points.',
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.red.shade700),
+                                    )),
+                              ]),
+                            ),
+                          ],
+                          const SizedBox(height: 8),
+                          Row(children: [
+                            Icon(Icons.info_outline,
+                                size: 13,
+                                color: Colors.grey.shade500),
+                            const SizedBox(width: 4),
+                            Text(
+                                'Daily gain remaining: +${merit.remainingDailyGain} pts',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey.shade500)),
+                            const Spacer(),
+                            Text('Tap for history →',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: tierColor,
+                                    fontWeight: FontWeight.w500)),
+                          ]),
+                        ]),
+                  ),
+                ),
+
+              if (!_isAdmin) const SizedBox(height: 20),
+
+              // ── Wallet ──
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(16),
+                  border:
+                  Border.all(color: Colors.green.withOpacity(0.2)),
+                ),
+                child: Row(children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                        color: Colors.green.withOpacity(0.15),
+                        shape: BoxShape.circle),
+                    child: const Icon(Icons.account_balance_wallet,
+                        color: Colors.green, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Wallet Balance',
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey)),
+                        Text(
+                            '৳${_user?.walletBalance.toStringAsFixed(2) ?? '0.00'}',
+                            style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green)),
+                      ]),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: () {},
+                    style: TextButton.styleFrom(
+                        foregroundColor: Colors.green),
+                    child: const Text('Top Up'),
+                  ),
+                ]),
+              ),
+              const SizedBox(height: 20),
+
+              // ── My Listings & Rentals ──
+              Row(children: [
+                Expanded(
+                    child: _ProfileCard(
+                      title: 'My Listings',
+                      subtitle: 'Items you offer',
+                      icon: Icons.list_alt,
+                      color: Colors.blue,
+                      onTap: () => Navigator.push(context,
+                          MaterialPageRoute(
+                              builder: (_) => const MyListPage())),
+                    )),
+                const SizedBox(width: 14),
+                Expanded(
+                    child: _ProfileCard(
+                      title: 'My Rentals',
+                      subtitle: 'Items you rented',
+                      icon: Icons.favorite,
+                      color: Colors.pink,
+                      onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) =>
+                              const MyCollectionPage())),
+                    )),
+              ]),
+              const SizedBox(height: 24),
+
+              // ── Menu items ──
+              if (!_isAdmin)
+                _MenuItem(
+                    icon: Icons.military_tech,
+                    title: 'Merit History',
+                    onTap: () => Navigator.push(context,
+                        MaterialPageRoute(
+                            builder: (_) => const MeritHistoryPage()))),
+              if (!_isAdmin) const Divider(height: 1),
+
+              _MenuItem(
+                icon: Icons.credit_card_outlined,
+                title: _isVerified ? 'NID Verified ✓' : 'Verify NID',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => const NIDVerificationPage()),
+                ).then((_) => _loadProfile()),
+                color: _isVerified ? Colors.green : null,
+              ),
+              const Divider(height: 1),
+
+              if (_isAdmin) ...[
+                _MenuItem(
+                  icon: Icons.admin_panel_settings,
+                  title: 'Admin Panel',
+                  onTap: () => Navigator.push(context,
+                      MaterialPageRoute(
+                          builder: (_) => const AdminPanelPage())),
+                  color: Colors.amber,
+                ),
+                const Divider(height: 1),
+              ],
+
+              _MenuItem(
+                  icon: Icons.settings_outlined,
+                  title: 'Settings',
+                  onTap: () => Navigator.push(context,
+                      MaterialPageRoute(
+                          builder: (_) => const SettingsPage()))),
+              const Divider(height: 1),
+              _MenuItem(
+                  icon: Icons.account_circle_outlined,
+                  title: 'Edit Profile',
+                  onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) =>
+                          const EditProfilePage()))
+                      .then((_) => _loadProfile())),
+              const Divider(height: 1),
+              _MenuItem(
+                  icon: Icons.help_outline,
+                  title: 'Help & Support',
+                  onTap: () {}),
+              const Divider(height: 1),
+              _MenuItem(
+                  icon: Icons.privacy_tip_outlined,
+                  title: 'Privacy Policy',
+                  onTap: () {}),
+              const Divider(height: 1),
+              _MenuItem(
+                  icon: Icons.logout,
+                  title: 'Log Out',
+                  onTap: _logout,
+                  color: Colors.red),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _scaleTick(String label, Color color) {
+    return Column(children: [
+      Container(width: 2, height: 6, color: color),
+      const SizedBox(height: 2),
+      Text(label,
+          style: TextStyle(
+              fontSize: 9, color: color, fontWeight: FontWeight.bold)),
+    ]);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// EditProfilePage — requires password to save changes
+// ─────────────────────────────────────────────────────────────
+class EditProfilePage extends StatefulWidget {
+  const EditProfilePage({super.key});
+
+  @override
+  State<EditProfilePage> createState() => _EditProfilePageState();
+}
+
+class _EditProfilePageState extends State<EditProfilePage> {
+  static const Color primaryColor = Color(0xFF381932);
+  static const Color backgroundColor = Color(0xFFF0EDE9);
+
+  final _nameCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _bioCtrl = TextEditingController();
+  bool _loading = false;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _phoneCtrl.dispose();
+    _bioCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final uid = SupabaseService.currentUserId;
+    if (uid == null) return;
+    final profile = await SupabaseService.fetchProfile(uid);
+    if (profile != null && mounted) {
+      _nameCtrl.text = profile['full_name'] ?? '';
+      _phoneCtrl.text = profile['phone'] ?? '';
+      _bioCtrl.text = profile['bio'] ?? '';
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  /// Show a dialog asking for the current password and verify it with Supabase
+  Future<bool> _requirePasswordConfirmation() async {
+    final passwordCtrl = TextEditingController();
+    bool obscure = true;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setS) {
+        return AlertDialog(
+          shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Confirm Password',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text(
+                'Enter your current password to save profile changes.',
+                style: TextStyle(fontSize: 13, color: Colors.grey)),
+            const SizedBox(height: 16),
+            TextField(
+              controller: passwordCtrl,
+              obscureText: obscure,
+              decoration: InputDecoration(
+                hintText: 'Current password',
+                prefixIcon:
+                const Icon(Icons.lock_outline, color: Colors.grey),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                      obscure ? Icons.visibility_off : Icons.visibility),
+                  onPressed: () => setS(() => obscure = !obscure),
+                ),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 12),
+              ),
+            ),
+          ]),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('Confirm'),
+            ),
+          ],
+        );
+      }),
+    );
+
+    if (confirmed != true) return false;
+    if (passwordCtrl.text.isEmpty) return false;
+
+    // Verify password by attempting sign-in
+    final email = SupabaseService.currentUser?.email;
+    if (email == null) return false;
+    try {
+      await SupabaseService.signIn(email, passwordCtrl.text);
+      return true;
+    } on AuthException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Incorrect password. Changes not saved.'),
+            backgroundColor: Colors.red));
+      }
+      return false;
+    }
+  }
+
+  Future<void> _save() async {
+    if (_nameCtrl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Name cannot be empty')));
+      return;
+    }
+    final uid = SupabaseService.currentUserId;
+    if (uid == null) return;
+
+    // Require password confirmation before saving
+    final authenticated = await _requirePasswordConfirmation();
+    if (!authenticated) return;
+
+    setState(() => _saving = true);
+    try {
+      await SupabaseService.upsertProfile({
+        'id': uid,
+        'full_name': _nameCtrl.text.trim(),
+        'phone': _phoneCtrl.text.trim(),
+        'bio': _bioCtrl.text.trim(),
+      });
+
+      // Merit bonus for completing profile
+      await MeritService.processCompleteProfile(uid);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Profile updated successfully!'),
+            backgroundColor: Color(0xFF381932)));
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text('Error saving: $e'),
+                backgroundColor: Colors.red));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: backgroundColor,
+      appBar: AppBar(
+        backgroundColor: primaryColor,
+        foregroundColor: Colors.white,
+        title: const Text('Edit Profile'),
+        centerTitle: true,
+        leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context)),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : _save,
+            child: const Text('Save',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16)),
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Info banner
+            Container(
+              padding: const EdgeInsets.all(12),
+              margin: const EdgeInsets.only(bottom: 20),
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blue.shade100),
+              ),
+              child: Row(children: [
+                Icon(Icons.info_outline,
+                    color: Colors.blue.shade700, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                    child: Text(
+                      'You will be asked for your current password before saving changes.',
+                      style: TextStyle(fontSize: 12),
+                    )),
+              ]),
+            ),
+            _label('Full Name'),
+            _field(_nameCtrl, 'Your full name', Icons.person_outline),
+            const SizedBox(height: 16),
+            _label('Phone Number'),
+            _field(_phoneCtrl, '+880 1xxx xxxxxx', Icons.phone_outlined),
+            const SizedBox(height: 16),
+            _label('Bio'),
+            TextFormField(
+              controller: _bioCtrl,
+              maxLines: 3,
+              decoration: _inputDec(
+                  'A short bio about yourself', Icons.info_outline),
+            ),
+            const SizedBox(height: 32),
+            SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: ElevatedButton(
+                onPressed: _saving ? null : _save,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                child: _saving
+                    ? const SizedBox(
+                  height: 22,
+                  width: 22,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor:
+                      AlwaysStoppedAnimation(Colors.white)),
+                )
+                    : const Text('Save Changes',
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _label(String text) => Padding(
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Text(text,
+        style:
+        const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+  );
+
+  Widget _field(TextEditingController ctrl, String hint, IconData icon) {
+    return TextFormField(
+        controller: ctrl, decoration: _inputDec(hint, icon));
+  }
+
+  InputDecoration _inputDec(String hint, IconData icon) => InputDecoration(
+    hintText: hint,
+    prefixIcon: Icon(icon, color: Colors.grey),
+    filled: true,
+    fillColor: Colors.white,
+    contentPadding:
+    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none),
+    enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: Colors.grey.shade200)),
+    focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide:
+        const BorderSide(color: primaryColor, width: 1.5)),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// SettingsPage
+// ─────────────────────────────────────────────────────────────
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  static const Color primaryColor = Color(0xFF381932);
+  static const Color backgroundColor = Color(0xFFF0EDE9);
+
+  bool _pushNotifications = true;
+  bool _emailNotifications = true;
+  bool _rentalReminders = true;
+  bool _chatNotifications = true;
+  bool _meritAlerts = true;
+  bool _darkMode = false;
+  String _language = 'English';
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: backgroundColor,
+      appBar: AppBar(
+        backgroundColor: primaryColor,
+        foregroundColor: Colors.white,
+        title: const Text('Settings'),
+        centerTitle: true,
+        leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Navigator.pop(context)),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _sectionHeader('Account'),
+            _settingsCard([
+              _navTile(Icons.account_circle_outlined, 'Edit Profile',
+                  onTap: () => Navigator.push(context,
+                      MaterialPageRoute(
+                          builder: (_) => const EditProfilePage()))),
+              _divider(),
+              _navTile(Icons.lock_outline, 'Change Password',
+                  onTap: () => _showChangePasswordSheet()),
+              _divider(),
+              _navTile(Icons.email_outlined, 'Change Email',
+                  onTap: () {}),
+              _divider(),
+              _navTile(Icons.phone_outlined, 'Phone Number',
+                  onTap: () {}),
+            ]),
+            const SizedBox(height: 16),
+
+            _sectionHeader('Notifications'),
+            _settingsCard([
+              _toggleTile(Icons.notifications_outlined,
+                  'Push Notifications', _pushNotifications,
+                      (v) => setState(() => _pushNotifications = v)),
+              _divider(),
+              _toggleTile(Icons.email_outlined, 'Email Notifications',
+                  _emailNotifications,
+                      (v) => setState(() => _emailNotifications = v)),
+              _divider(),
+              _toggleTile(Icons.schedule, 'Rental Reminders',
+                  _rentalReminders,
+                      (v) => setState(() => _rentalReminders = v)),
+              _divider(),
+              _toggleTile(Icons.chat_bubble_outline,
+                  'Chat Notifications', _chatNotifications,
+                      (v) => setState(() => _chatNotifications = v)),
+              _divider(),
+              _toggleTile(Icons.military_tech, 'Merit Alerts',
+                  _meritAlerts,
+                      (v) => setState(() => _meritAlerts = v)),
+            ]),
+            const SizedBox(height: 16),
+
+            _sectionHeader('Appearance'),
+            _settingsCard([
+              _toggleTile(Icons.dark_mode_outlined, 'Dark Mode',
+                  _darkMode,
+                      (v) => setState(() => _darkMode = v)),
+              _divider(),
+              ListTile(
+                leading:
+                const Icon(Icons.language, color: Colors.grey),
+                title: const Text('Language'),
+                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text(_language,
+                      style: TextStyle(color: Colors.grey.shade600)),
+                  const Icon(Icons.chevron_right, color: Colors.grey),
+                ]),
+                onTap: () => _showLanguageSheet(),
+              ),
+            ]),
+            const SizedBox(height: 16),
+
+            _sectionHeader('Privacy & Security'),
+            _settingsCard([
+              _navTile(Icons.visibility_outlined, 'Profile Visibility',
+                  onTap: () {}),
+              _divider(),
+              _navTile(
+                  Icons.security, 'Two-Factor Authentication',
+                  onTap: () {}),
+              _divider(),
+              _navTile(Icons.block, 'Blocked Users', onTap: () {}),
+              _divider(),
+              _navTile(Icons.download_outlined, 'Download My Data',
+                  onTap: () {}),
+            ]),
+            const SizedBox(height: 16),
+
+            _sectionHeader('Support'),
+            _settingsCard([
+              _navTile(Icons.help_outline, 'Help Center',
+                  onTap: () {}),
+              _divider(),
+              _navTile(Icons.report_outlined, 'Report a Problem',
+                  onTap: () {}),
+              _divider(),
+              _navTile(Icons.star_border, 'Rate the App',
+                  onTap: () {}),
+              _divider(),
+              _navTile(Icons.info_outline, 'About RentalApp',
+                  onTap: () => _showAboutDialog()),
+            ]),
+            const SizedBox(height: 16),
+
+            _sectionHeader('Account Actions'),
+            _settingsCard([
+              _navTile(Icons.logout, 'Log Out',
+                  color: Colors.red, onTap: () async {
+                    await SupabaseService.signOut();
+                    if (mounted) {
+                      Navigator.pushAndRemoveUntil(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => const LoginScreen()),
+                              (_) => false);
+                    }
+                  }),
+              _divider(),
+              _navTile(
+                  Icons.delete_forever_outlined, 'Delete Account',
+                  color: Colors.red,
+                  onTap: () => _showDeleteAccountDialog()),
+            ]),
+            const SizedBox(height: 32),
+
+            Center(
+                child: Text('RentalApp v1.0.0',
+                    style: TextStyle(
+                        color: Colors.grey.shade400, fontSize: 12))),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionHeader(String title) => Padding(
+    padding: const EdgeInsets.only(bottom: 8, left: 4),
+    child: Text(title,
+        style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: Colors.grey.shade600,
+            letterSpacing: 0.5)),
+  );
+
+  Widget _settingsCard(List<Widget> children) => Container(
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      boxShadow: [
+        BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2))
+      ],
+    ),
+    child: Column(children: children),
+  );
+
+  Widget _divider() => const Divider(height: 1, indent: 56);
+
+  Widget _toggleTile(IconData icon, String title, bool value,
+      ValueChanged<bool> onChanged) {
+    return ListTile(
+      leading: Icon(icon, color: primaryColor),
+      title: Text(title),
+      trailing:
+      Switch(value: value, onChanged: onChanged, activeColor: primaryColor),
+    );
+  }
+
+  Widget _navTile(IconData icon, String title,
+      {VoidCallback? onTap, Color? color}) {
+    return ListTile(
+      leading: Icon(icon, color: color ?? primaryColor),
+      title: Text(title, style: TextStyle(color: color)),
+      trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+      onTap: onTap,
+    );
+  }
+
+  void _showChangePasswordSheet() {
+    final passCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+            left: 20,
+            right: 20,
+            top: 20),
+        child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Change Password',
+                  style: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              TextField(
+                  controller: passCtrl,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                      labelText: 'New Password',
+                      border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              TextField(
+                  controller: confirmCtrl,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                      labelText: 'Confirm Password',
+                      border: OutlineInputBorder())),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: () {
+                    if (passCtrl.text != confirmCtrl.text) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text('Passwords do not match')));
+                      return;
+                    }
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text(
+                            'Password update requested — check your email.')));
+                  },
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12))),
+                  child: const Text('Update Password'),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ]),
+      ),
+    );
+  }
+
+  void _showLanguageSheet() {
+    final languages = ['English', 'বাংলা', 'العربية', 'हिन्दी'];
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => Column(mainAxisSize: MainAxisSize.min, children: [
+        const Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('Select Language',
+              style:
+              TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        ),
+        ...languages.map((l) => ListTile(
+          title: Text(l),
+          trailing: _language == l
+              ? const Icon(Icons.check, color: primaryColor)
+              : null,
+          onTap: () {
+            setState(() => _language = l);
+            Navigator.pop(context);
+          },
+        )),
+        const SizedBox(height: 16),
+      ]),
+    );
+  }
+
+  void _showAboutDialog() {
+    showAboutDialog(
+      context: context,
+      applicationName: 'RentalApp',
+      applicationVersion: '1.0.0',
+      applicationIcon:
+      const Icon(Icons.home_work, size: 40, color: primaryColor),
+      children: [
+        const Text('Rent anything, anywhere.\n\n© 2025 RentalApp.')
+      ],
+    );
+  }
+
+  void _showDeleteAccountDialog() {
+    showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Delete Account'),
+          content: const Text(
+              'This action is irreversible. All your data will be permanently deleted.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel')),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text(
+                        'Please contact support to delete your account.')));
+              },
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white),
+              child: const Text('Delete'),
+            ),
+          ],
+        ));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Shared widgets
+// ─────────────────────────────────────────────────────────────
+class _ProfileCard extends StatelessWidget {
+  final String title, subtitle;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ProfileCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.7),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2))
+        ],
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child:
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Icon(icon, size: 32, color: color),
+            const SizedBox(height: 12),
+            Text(title,
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(subtitle,
+                style: TextStyle(
+                    fontSize: 12, color: Colors.grey.shade600)),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuItem extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final VoidCallback onTap;
+  final Color? color;
+
+  const _MenuItem(
+      {required this.icon,
+        required this.title,
+        required this.onTap,
+        this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon, color: color),
+      title: Text(title, style: TextStyle(color: color)),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
+    );
+  }
+}
